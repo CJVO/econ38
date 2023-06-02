@@ -1,0 +1,643 @@
+-----------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  /Users/chukwuka/Desktop/Stata/Econ38Stata/data_analysis.log
+  log type:  text
+ opened on:   1 Jun 2023, 23:53:29
+
+. use "newest.dta"
+
+. 
+. save newest_copy.dta, replace
+file newest_copy.dta saved
+
+. 
+. ** To generate state level averages for different medicaid characteristics. **
+. clear
+
+. use newest_copy.dta
+
+. 
+. * dummy for having medicaid in the past year
+. generate hadmcaidly = 0
+
+. replace hadmcaidly = 1 if himcaidly == 2
+(259,369 real changes made)
+
+. 
+. * dummies for race
+. gen statewgts = 1
+
+. generate white = (race == 100)
+
+. generate black = (race == 200)
+
+. generate otherrace = (race > 200)
+
+. generate mcaidelig = (nchild==0 & educ<80 & 18<=age<=65)
+
+. 
+. * dummies for education status
+. generate hseduc = (educ==73)
+
+. generate colleduc = (educ==111|123<=educ & educ<125)
+
+. generate somecoll = (81<=educ & educ<=110|120<=educ & educ <=122)
+
+. 
+. * state averages weighted by observations
+. collapse (mean) hadmcaidly white black otherrace hseduc colleduc somecoll age mcaidelig (raws
+> um) nobs=statewgts [pw=asecwt], by (statefip year)
+
+. save medicaid, replace
+file medicaid.dta saved
+
+. 
+. ** To generate the state level voter statistics using the voter dataset. **
+. clear
+
+. use newest_copy.dta
+
+. drop if age<18
+(433,191 observations deleted)
+
+. drop if voted==.
+(982,322 observations deleted)
+
+. gen votestatewgts = 1
+
+. gen didvote = 0
+
+. replace didvote = 1 if voted==2
+(118,130 real changes made)
+
+. generate mcaideligvote = (nchild==0 & educ<80 & 18<=age<=65)
+
+. regress didvote mcaideligvote
+
+      Source |       SS           df       MS      Number of obs   =   203,417
+-------------+----------------------------------   F(1, 203415)    =   3547.49
+       Model |  848.957293         1  848.957293   Prob > F        =    0.0000
+    Residual |  48679.6136   203,415  .239311819   R-squared       =    0.0171
+-------------+----------------------------------   Adj R-squared   =    0.0171
+       Total |  49528.5709   203,416  .243484145   Root MSE        =     .4892
+
+-------------------------------------------------------------------------------
+      didvote | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+--------------+----------------------------------------------------------------
+mcaideligvote |  -.1476006   .0024781   -59.56   0.000    -.1524577   -.1427435
+        _cons |   .6188494   .0012594   491.38   0.000      .616381    .6213178
+-------------------------------------------------------------------------------
+
+. collapse (mean) didvote age mcaideligvote (rawsum) nobs2=votestatewgts, by (statefip year)
+
+. save voting, replace
+file voting.dta saved
+
+. 
+. ** Merging both datasets **
+. merge 1:1 statefip year using medicaid
+(label STATEFIP already defined)
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                           255
+        from master                         0  (_merge==1)
+        from using                        255  (_merge==2)
+
+    Matched                               102  (_merge==3)
+    -----------------------------------------
+
+. drop _merge
+
+. save first_voting_medicaid, replace
+file first_voting_medicaid.dta saved
+
+. 
+. 
+. ** Core data analysis **
+. use first_voting_medicaid
+
+. 
+. * Not interested in non-voting years
+. // drop if inlist(year, 2013, 2014, 2015, 2017, 2019)
+. save first_voting_medicaid, replace
+file first_voting_medicaid.dta saved
+
+. 
+. use first_voting_medicaid
+
+. 
+. * Isolating states that adopted medicaid in 2014
+. egen group = group(statefip)
+
+. su group, meanonly
+
+. generate in2014 = 0
+
+. replace in2014=1 if (group >= 3 & group <= 9|group==12|group==14|group==16|group==18|group>=2
+> 1&group<=24|29<=group&group<=33|group == 35|group == 36|group==38|group==40|group==46|group==
+> 48| group==49)
+(189 real changes made)
+
+. 
+. * Generating relevant variables
+. generate elec2016 = (year==2016)
+
+. generate mcaid_state2014 = hadmcaidly*in2014
+
+. generate mcaid_elec2016 = hadmcaidly*elec2016
+
+. generate elec2016_in2014 = elec2016*in2014
+
+. generate mcaid_in2014_elec2016 = hadmcaidly*in2014*elec2016
+
+. 
+. save working_copy_data, replace
+file working_copy_data.dta saved
+
+. 
+. use working_copy_data
+
+. 
+. 
+. *** Table of means to show a parallel trends assumption in states that adopted medicaid and i
+> n states that did not adopt medicaid in 2012 and in 2016 ***
+. local howout = "replace"
+
+. forval i = 2012(4)2016 {
+  2.         forval j = 0/1  {
+  3.         outsum didvote age hadmcaidly mcaidelig white black otherrace hseduc somecoll coll
+> educ using tabMeansState.csv if year==`i' & in2014==`j', comma `howout' bracket ctitle (year=
+> =`i' & states2014=`j')
+  4.         local howout = "append"
+  5.         }
+  6. }
+
+. 
+. 
+. *** Balance test to test whether any other variables of interest affect our outcome variable,
+>  didvote ***
+. local howout = "replace"
+
+. foreach var in age white black otherrace hseduc somecoll colleduc {
+  2.         reg `var' hadmcaidly, robust
+  3.         testparm hadmcaidly
+  4.         outreg2 using initialbaltest, `howout' excel ctitle(`var') addstat (p-value, `r(p)
+> ')
+  5.         local howout = "append"
+  6. }
+
+Linear regression                               Number of obs     =        357
+                                                F(1, 355)         =       0.93
+                                                Prob > F          =     0.3365
+                                                R-squared         =     0.0025
+                                                Root MSE          =      4.741
+
+------------------------------------------------------------------------------
+             |               Robust
+         age | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  hadmcaidly |   5.497649   5.712792     0.96   0.337    -5.737521    16.73282
+       _cons |   40.16973   1.036885    38.74   0.000     38.13052    42.20894
+------------------------------------------------------------------------------
+
+ ( 1)  hadmcaidly = 0
+
+       F(  1,   355) =    0.93
+            Prob > F =    0.3365
+initialbaltest.xml
+dir : seeout
+
+Linear regression                               Number of obs     =        357
+                                                F(1, 355)         =      16.43
+                                                Prob > F          =     0.0001
+                                                R-squared         =     0.0449
+                                                Root MSE          =     .13256
+
+------------------------------------------------------------------------------
+             |               Robust
+       white | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  hadmcaidly |  -.6608202   .1630499    -4.05   0.000    -.9814853    -.340155
+       _cons |   .9040558   .0277204    32.61   0.000     .8495389    .9585728
+------------------------------------------------------------------------------
+
+ ( 1)  hadmcaidly = 0
+
+       F(  1,   355) =   16.43
+            Prob > F =    0.0001
+initialbaltest.xml
+dir : seeout
+
+Linear regression                               Number of obs     =        357
+                                                F(1, 355)         =      13.80
+                                                Prob > F          =     0.0002
+                                                R-squared         =     0.0601
+                                                Root MSE          =     .10439
+
+------------------------------------------------------------------------------
+             |               Robust
+       black | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  hadmcaidly |   .6070716   .1634316     3.71   0.000     .2856558    .9284873
+       _cons |   .0092409   .0264686     0.35   0.727     -.042814    .0612958
+------------------------------------------------------------------------------
+
+ ( 1)  hadmcaidly = 0
+
+       F(  1,   355) =   13.80
+            Prob > F =    0.0002
+initialbaltest.xml
+dir : seeout
+
+Linear regression                               Number of obs     =        357
+                                                F(1, 355)         =       0.56
+                                                Prob > F          =     0.4551
+                                                R-squared         =     0.0005
+                                                Root MSE          =     .10884
+
+------------------------------------------------------------------------------
+             |               Robust
+   otherrace | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  hadmcaidly |   .0537486   .0718728     0.75   0.455    -.0876015    .1950986
+       _cons |   .0867033   .0136633     6.35   0.000     .0598321    .1135745
+------------------------------------------------------------------------------
+
+ ( 1)  hadmcaidly = 0
+
+       F(  1,   355) =    0.56
+            Prob > F =    0.4551
+initialbaltest.xml
+dir : seeout
+
+Linear regression                               Number of obs     =        357
+                                                F(1, 355)         =       4.23
+                                                Prob > F          =     0.0405
+                                                R-squared         =     0.0174
+                                                Root MSE          =     .03393
+
+------------------------------------------------------------------------------
+             |               Robust
+      hseduc | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  hadmcaidly |    .103654   .0504207     2.06   0.041     .0044933    .2028147
+       _cons |   .2141682   .0082724    25.89   0.000     .1978992    .2304372
+------------------------------------------------------------------------------
+
+ ( 1)  hadmcaidly = 0
+
+       F(  1,   355) =    4.23
+            Prob > F =    0.0405
+initialbaltest.xml
+dir : seeout
+
+Linear regression                               Number of obs     =        357
+                                                F(1, 355)         =      31.75
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.1262
+                                                Root MSE          =     .02619
+
+------------------------------------------------------------------------------
+             |               Robust
+    somecoll | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  hadmcaidly |  -.2288188   .0406077    -5.63   0.000    -.3086808   -.1489569
+       _cons |   .2632175   .0068333    38.52   0.000     .2497788    .2766563
+------------------------------------------------------------------------------
+
+ ( 1)  hadmcaidly = 0
+
+       F(  1,   355) =   31.75
+            Prob > F =    0.0000
+initialbaltest.xml
+dir : seeout
+
+Linear regression                               Number of obs     =        357
+                                                F(1, 355)         =       0.58
+                                                Prob > F          =     0.4459
+                                                R-squared         =     0.0030
+                                                Root MSE          =     .05176
+
+------------------------------------------------------------------------------
+             |               Robust
+    colleduc | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  hadmcaidly |   .0657974   .0862225     0.76   0.446    -.1037738    .2353686
+       _cons |    .206598   .0138442    14.92   0.000      .179371     .233825
+------------------------------------------------------------------------------
+
+ ( 1)  hadmcaidly = 0
+
+       F(  1,   355) =    0.58
+            Prob > F =    0.4459
+initialbaltest.xml
+dir : seeout
+
+. 
+. 
+. *** Key regressions ***
+. regress hadmcaidly year in2014 age white otherrace hseduc somecoll colleduc [aw=nobs], robust
+(sum of wgt is 1,354,114)
+
+Linear regression                               Number of obs     =        357
+                                                F(8, 348)         =      21.61
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.3616
+                                                Root MSE          =     .03571
+
+------------------------------------------------------------------------------
+             |               Robust
+  hadmcaidly | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+        year |   .0065862   .0011049     5.96   0.000     .0044131    .0087593
+      in2014 |   .0426214   .0047903     8.90   0.000     .0331998     .052043
+         age |   .0008036   .0004818     1.67   0.096     -.000144    .0017513
+       white |  -.0623498    .027105    -2.30   0.022      -.11566   -.0090395
+   otherrace |  -.0265647   .0293457    -0.91   0.366    -.0842818    .0311525
+      hseduc |   -.227302   .0953138    -2.38   0.018    -.4147655   -.0398385
+    somecoll |  -.7260261   .1177079    -6.17   0.000    -.9575344   -.4945178
+    colleduc |  -.4974812   .0855628    -5.81   0.000    -.6657665   -.3291958
+       _cons |  -12.77642   2.208997    -5.78   0.000    -17.12109    -8.43176
+------------------------------------------------------------------------------
+
+. outreg2 using testing, replace excel
+testing.xml
+dir : seeout
+
+. 
+. * OLS regression
+. regress didvote elec2016 in2014 elec2016_in2014 age white otherrace hseduc somecoll colleduc 
+> [aw=nobs], robust
+(sum of wgt is 386,885)
+
+Linear regression                               Number of obs     =        102
+                                                F(9, 92)          =      16.19
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.6252
+                                                Root MSE          =     .04299
+
+---------------------------------------------------------------------------------
+                |               Robust
+        didvote | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+       elec2016 |  -.0187195   .0205197    -0.91   0.364    -.0594735    .0220345
+         in2014 |  -.0059659   .0158144    -0.38   0.707    -.0373747    .0254428
+elec2016_in2014 |  -.0105704   .0215595    -0.49   0.625    -.0533895    .0322487
+            age |  -.0016665   .0048517    -0.34   0.732    -.0113023    .0079694
+          white |  -.1532734   .0665156    -2.30   0.023    -.2853792   -.0211676
+      otherrace |  -.3973469    .072809    -5.46   0.000    -.5419518    -.252742
+         hseduc |   1.170529   .2053996     5.70   0.000     .7625879    1.578471
+       somecoll |   2.096533   .2682377     7.82   0.000      1.56379    2.629277
+       colleduc |    1.42681   .1630836     8.75   0.000     1.102912    1.750708
+          _cons |  -.2030796   .2076356    -0.98   0.331    -.6154619    .2093026
+---------------------------------------------------------------------------------
+
+. outreg2 using tableResults, ctitle(OLS, voter turnout) replace excel
+tableResults.xml
+dir : seeout
+
+. 
+. * First stage regression
+. regress hadmcaidly elec2016 in2014 elec2016_in2014 age white otherrace hseduc somecoll colled
+> uc [aw=nobs], robust
+(sum of wgt is 1,354,114)
+
+Linear regression                               Number of obs     =        357
+                                                F(9, 347)         =      14.00
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.3076
+                                                Root MSE          =     .03724
+
+---------------------------------------------------------------------------------
+                |               Robust
+     hadmcaidly | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+       elec2016 |   .0259165   .0079557     3.26   0.001     .0102689     .041564
+         in2014 |   .0387349   .0052949     7.32   0.000     .0283208     .049149
+elec2016_in2014 |   .0125084   .0123324     1.01   0.311    -.0117473    .0367641
+            age |  -.0015107   .0005654    -2.67   0.008    -.0026228   -.0003986
+          white |  -.0621721   .0290326    -2.14   0.033    -.1192741   -.0050702
+      otherrace |  -.0231645   .0323987    -0.71   0.475     -.086887     .040558
+         hseduc |   -.081116   .0891692    -0.91   0.364    -.2564961     .094264
+       somecoll |  -.6218873   .1261545    -4.93   0.000     -.870011   -.3737636
+       colleduc |  -.3551691   .0773868    -4.59   0.000    -.5073753   -.2029628
+          _cons |   .4996101   .0597569     8.36   0.000     .3820787    .6171414
+---------------------------------------------------------------------------------
+
+. outreg2 using testing, replace excel
+testing.xml
+dir : seeout
+
+. outreg2 using tableResults, ctitle(First Stage, had medicaid last year)append
+dir : seeout
+
+. 
+. * Reduced form regression
+. regress didvote hadmcaidly elec2016 in2014 age white otherrace hseduc somecoll colleduc[aw=no
+> bs], robust
+(sum of wgt is 386,885)
+
+Linear regression                               Number of obs     =        102
+                                                F(9, 92)          =      16.07
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.6238
+                                                Root MSE          =     .04308
+
+------------------------------------------------------------------------------
+             |               Robust
+     didvote | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  hadmcaidly |   .0144685   .1106155     0.13   0.896    -.2052234    .2341604
+    elec2016 |  -.0252568   .0131508    -1.92   0.058    -.0513753    .0008618
+      in2014 |  -.0113909   .0119298    -0.95   0.342    -.0350845    .0123027
+         age |  -.0014955   .0046041    -0.32   0.746    -.0106396    .0076487
+       white |  -.1552961   .0639211    -2.43   0.017    -.2822488   -.0283434
+   otherrace |  -.4001074   .0728544    -5.49   0.000    -.5448025   -.2554123
+      hseduc |   1.161935   .1935164     6.00   0.000     .7775949    1.546276
+    somecoll |    2.10945   .2928877     7.20   0.000      1.52775     2.69115
+    colleduc |   1.427144   .1709843     8.35   0.000     1.087555    1.766734
+       _cons |  -.2095091   .2222545    -0.94   0.348    -.6509258    .2319076
+------------------------------------------------------------------------------
+
+. outreg2 using tableResults, ctitle(Reduced form, voter turnout) append
+dir : seeout
+
+. 
+. * IV Reg/2SLS
+. ivreg didvote (hadmcaidly=elec2016_in2014) elec2016 in2014 age white otherrace hseduc somecol
+> l colleduc [aw=nobs], robust
+(sum of wgt is 386,885)
+
+Instrumental variables 2SLS regression          Number of obs     =        102
+                                                F(9, 92)          =      13.90
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.5913
+                                                Root MSE          =      .0449
+
+------------------------------------------------------------------------------
+             |               Robust
+     didvote | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  hadmcaidly |  -.3487661   .7125851    -0.49   0.626    -1.764022    1.066489
+    elec2016 |  -.0114102   .0349287    -0.33   0.745    -.0807817    .0579612
+      in2014 |   .0017859   .0300017     0.06   0.953       -.0578    .0613719
+         age |  -.0002601   .0048799    -0.05   0.958     -.009952    .0094317
+       white |  -.1717687   .0757224    -2.27   0.026      -.32216   -.0213775
+   otherrace |  -.4018508   .0780779    -5.15   0.000    -.5569203   -.2467813
+      hseduc |   1.060052   .2682443     3.95   0.000     .5272961    1.592809
+    somecoll |   1.844333    .609786     3.02   0.003     .6332458    3.055421
+    colleduc |   1.266182   .3732219     3.39   0.001     .5249307    2.007432
+       _cons |  -.0891034   .3593489    -0.25   0.805    -.8028014    .6245946
+------------------------------------------------------------------------------
+Instrumented: hadmcaidly
+ Instruments: elec2016 in2014 age white otherrace hseduc somecoll colleduc
+              elec2016_in2014
+
+. outreg2 using tableResults, ctitle (2SLS, voter turnout) append
+dir : seeout
+
+. 
+. 
+. *** Key regressions using voter turnout of only people who were eligible for the medicaid exp
+> ansion ***
+. * OLS regression
+. regress mcaideligvote elec2016 in2014 elec2016_in2014 age white otherrace hseduc somecoll col
+> leduc [aw=nobs], robust
+(sum of wgt is 386,885)
+
+Linear regression                               Number of obs     =        102
+                                                F(9, 92)          =      61.08
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.8736
+                                                Root MSE          =     .01565
+
+---------------------------------------------------------------------------------
+                |               Robust
+  mcaideligvote | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+       elec2016 |  -.0004904   .0049706    -0.10   0.922    -.0103625    .0093817
+         in2014 |   .0010063    .004594     0.22   0.827    -.0081179    .0101304
+elec2016_in2014 |  -.0025551   .0064705    -0.39   0.694     -.015406    .0102958
+            age |    .004578   .0017928     2.55   0.012     .0010172    .0081387
+          white |  -.0543577   .0194755    -2.79   0.006    -.0930377   -.0156776
+      otherrace |  -.1391143   .0237517    -5.86   0.000    -.1862872   -.0919415
+         hseduc |   .6297822   .0988171     6.37   0.000      .433523    .8260413
+       somecoll |  -.1295686   .0975487    -1.33   0.187    -.3233087    .0641715
+       colleduc |  -.3646312   .0672127    -5.43   0.000    -.4981215   -.2311409
+          _cons |      .0573   .0634321     0.90   0.369    -.0686816    .1832816
+---------------------------------------------------------------------------------
+
+. outreg2 using tableResults2, ctitle(OLS, voter turnout) replace excel
+tableResults2.xml
+dir : seeout
+
+. 
+. * First stage regression
+. regress hadmcaidly elec2016 in2014 elec2016_in2014 age white otherrace hseduc somecoll colled
+> uc [aw=nobs], robust
+(sum of wgt is 1,354,114)
+
+Linear regression                               Number of obs     =        357
+                                                F(9, 347)         =      14.00
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.3076
+                                                Root MSE          =     .03724
+
+---------------------------------------------------------------------------------
+                |               Robust
+     hadmcaidly | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+       elec2016 |   .0259165   .0079557     3.26   0.001     .0102689     .041564
+         in2014 |   .0387349   .0052949     7.32   0.000     .0283208     .049149
+elec2016_in2014 |   .0125084   .0123324     1.01   0.311    -.0117473    .0367641
+            age |  -.0015107   .0005654    -2.67   0.008    -.0026228   -.0003986
+          white |  -.0621721   .0290326    -2.14   0.033    -.1192741   -.0050702
+      otherrace |  -.0231645   .0323987    -0.71   0.475     -.086887     .040558
+         hseduc |   -.081116   .0891692    -0.91   0.364    -.2564961     .094264
+       somecoll |  -.6218873   .1261545    -4.93   0.000     -.870011   -.3737636
+       colleduc |  -.3551691   .0773868    -4.59   0.000    -.5073753   -.2029628
+          _cons |   .4996101   .0597569     8.36   0.000     .3820787    .6171414
+---------------------------------------------------------------------------------
+
+. outreg2 using tableResults2, ctitle(First Stage, had medicaid last year)append
+dir : seeout
+
+. 
+. * Reduced form regression
+. regress mcaideligvote hadmcaidly elec2016 in2014 age white otherrace hseduc somecoll colleduc
+> [aw=nobs], robust
+(sum of wgt is 386,885)
+
+Linear regression                               Number of obs     =        102
+                                                F(9, 92)          =      58.57
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.8734
+                                                Root MSE          =     .01567
+
+------------------------------------------------------------------------------
+             |               Robust
+mcaideligv~e | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  hadmcaidly |  -.0004274   .0464392    -0.01   0.993    -.0926597    .0918049
+    elec2016 |   -.001921   .0039529    -0.49   0.628    -.0097719    .0059299
+      in2014 |  -.0001627   .0042789    -0.04   0.970    -.0086608    .0083355
+         age |   .0046326   .0017866     2.59   0.011     .0010842     .008181
+       white |  -.0550246   .0189415    -2.90   0.005    -.0926441    -.017405
+   otherrace |  -.1398004   .0234551    -5.96   0.000    -.1863842   -.0932167
+      hseduc |   .6266039   .0995476     6.29   0.000     .4288938    .8243141
+    somecoll |  -.1293109    .101133    -1.28   0.204    -.3301698     .071548
+    colleduc |  -.3662896    .069048    -5.30   0.000    -.5034249   -.2291542
+       _cons |   .0570469   .0648243     0.88   0.381    -.0716998    .1857935
+------------------------------------------------------------------------------
+
+. outreg2 using tableResults2, ctitle(Reduced form, voter turnout) append
+dir : seeout
+
+. 
+. * IV Reg/2SLS
+. ivreg mcaideligvote (hadmcaidly=elec2016_in2014) elec2016 in2014 age white otherrace hseduc s
+> omecoll colleduc [aw=nobs], robust
+(sum of wgt is 386,885)
+
+Instrumental variables 2SLS regression          Number of obs     =        102
+                                                F(9, 92)          =      63.04
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.8690
+                                                Root MSE          =     .01594
+
+------------------------------------------------------------------------------
+             |               Robust
+mcaideligv~e | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  hadmcaidly |  -.0843044   .2131809    -0.40   0.693    -.5077002    .3390913
+    elec2016 |   .0012764   .0087596     0.15   0.884    -.0161209    .0186737
+      in2014 |   .0028801   .0083229     0.35   0.730      -.01365    .0194102
+         age |   .0049179   .0019576     2.51   0.014     .0010299    .0088059
+       white |  -.0588284   .0224944    -2.62   0.010    -.1035042   -.0141526
+   otherrace |   -.140203    .023795    -5.89   0.000    -.1874619   -.0929442
+      hseduc |   .6030775   .1158298     5.21   0.000     .3730296    .8331254
+    somecoll |  -.1905309   .1736333    -1.10   0.275    -.5353815    .1543198
+    colleduc |  -.4034586   .1097943    -3.67   0.000    -.6215196   -.1853976
+       _cons |   .0848506   .0983584     0.86   0.391    -.1104976    .2801988
+------------------------------------------------------------------------------
+Instrumented: hadmcaidly
+ Instruments: elec2016 in2014 age white otherrace hseduc somecoll colleduc
+              elec2016_in2014
+
+. outreg2 using tableResults2, ctitle (2SLS, voter turnout) append
+dir : seeout
+
+. 
+. 
+. 
+. 
+. 
+. 
+. 
+. 
+. 
+. 
+end of do-file
+
+. exit, clear
